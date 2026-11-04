@@ -1,0 +1,40 @@
+name: undo-effects
+label: Undo Effects
+kind: standalone
+version: "0.1.0"
+manifest_version: 2
+author: Moodtuner997
+homepage: https://github.com/Moodtuner997/hermes-undo-effects
+description: >
+  Put back what an agent deleted or overwrote. Before write_file, patch and
+  destructive terminal commands (rm, mv, cp, redirects, sed -i, find -delete),
+  the plugin saves the affected files to a local content-addressed store, then
+  lets the tool run unchanged. /undo-effects lists the effects and restores
+  them, refusing to overwrite anything edited since unless forced, and keeping
+  a safety copy so a restore can itself be undone. Works on files outside git
+  and says plainly what it could not cover.
+requires_hermes: ">=0.22.7"
+provides_hooks: []
+provides_middleware:
+  - tool_execution
+config_schema:
+  max_file_mb:
+    type: int
+    default: 50
+    label: Largest file to snapshot (MB)
+    description: Files above this size are not saved and are reported as not covered.
+  max_entry_mb:
+    type: int
+    default: 200
+    label: Largest snapshot per tool call (MB)
+    description: Total bytes saved for one tool call.
+  retention_days:
+    type: int
+    default: 14
+    label: Keep snapshots for (days)
+    description: Older entries are removed by "prune" and when the plugin starts.
+  snapshot_budget_s:
+    type: int
+    default: 8
+    label: Time budget per snapshot (seconds)
+    description: A snapshot that would take longer is cut short and the rest reported as not covered; the tool call still runs.
