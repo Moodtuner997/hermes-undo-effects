@@ -161,3 +161,12 @@ def test_restore_can_be_redone_by_id_and_safety_copies_stay_out_of_the_list(ctx,
     assert "undo-effects.restore" not in ctx.commands["undo-effects"]("list", session_id="s1")
     ctx.commands["undo-effects"](f"restore {safety_id}", session_id="s1")
     assert f.read_text() == "v2"
+
+
+def test_cli_accepts_plugin_flags(ctx):
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    ctx.cli["undo-effects"][0](parser)
+    assert parser.parse_args(["restore", "1", "--dry-run"]).rest == ["restore", "1", "--dry-run"]
+    assert parser.parse_args(["restore", "last", "--force"]).rest == ["restore", "last", "--force"]

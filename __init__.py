@@ -119,7 +119,11 @@ def _slash(raw_args: str = "", session_id: str = "", **_: Any) -> str:
 
 
 def _cli_setup(parser: Any) -> None:
-    parser.add_argument("rest", nargs="*", help="list | show N | restore N|last [--dry-run] [--force] | prune | doctor")
+    import argparse
+
+    # REMAINDER, not "*": flags such as --dry-run and --force belong to the plugin, not to argparse.
+    parser.add_argument("rest", nargs=argparse.REMAINDER,
+                        help="list | show N | restore N|last [--dry-run] [--force] | prune | doctor")
 
 
 def _cli_run(args: Any) -> None:
