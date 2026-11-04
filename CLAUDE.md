@@ -14,8 +14,10 @@ chantier : `.work/HANDOFF-hackathon-hermes.md` à la racine du parc.
 ## Pièges
 - `plugin.yaml` doit déclarer `provides_middleware`, sinon `hermes plugins validate` échoue ; le chargeur
   affiche pourtant « unknown manifest field » (avertissement inoffensif, à signaler en amont).
-- L'ordre réel dans Hermes 0.22.7 : `tool_execution` passe avant `pre_tool_call` et avant l'approbation (la doc dit
-  l'inverse) ; sans effet ici puisque le plugin ne modifie rien. Un appel refusé ne laisse pas d'entrée.
+- Ordre mesuré le 4/11 sur Hermes 0.22.7 (terminal, sonde sur l'A1) : tool_request, pre_tool_call, tool_execution
+  (entrée), porte d'approbation du terminal, tool_execution (sortie). La doc place l'approbation avant
+  `tool_execution` : elle se trompe pour le terminal. Sans effet ici (le plugin ne modifie rien) ; un appel refusé
+  ne laisse pas d'entrée.
 - Hermes refuse `write_file` sur un fichier que l'agent n'a pas lu : le test de bout en bout lit d'abord.
 - Le dossier du dépôt n'est pas importable (tiret) : les tests chargent le paquet sous `undo_effects` ; `pytest.ini`
   vit dans `tests/` car un `__init__.py` à la racine trompe pytest.

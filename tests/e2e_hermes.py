@@ -2,7 +2,7 @@
 
 Run with the Hermes interpreter and a throwaway HERMES_HOME in which the plugin is enabled:
 
-    HERMES_HOME=/tmp/hk/home <hermes python> scripts/e2e_hermes.py
+    HERMES_HOME=/tmp/hk/home <hermes python> tests/e2e_hermes.py
 
 It sends real tool calls through ``model_tools.handle_function_call`` (hooks, middleware,
 approvals, real terminal) and checks that undo-effects saved and restored the files.

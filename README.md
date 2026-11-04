@@ -86,7 +86,7 @@ use them together if you like.
 ```bash
 python -m pytest tests -q                 # 44 tests, no Hermes needed
 hermes plugins validate .                 # the catalog gate
-HERMES_HOME=/tmp/hk/home <hermes python> scripts/e2e_hermes.py   # real tool calls through Hermes, no LLM
+HERMES_HOME=/tmp/hk/home <hermes python> tests/e2e_hermes.py   # real tool calls through Hermes, no LLM
 ```
 
 Known limits: v1 saves files, not other side effects; commands the parser does not understand are reported, not
