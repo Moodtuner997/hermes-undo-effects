@@ -89,8 +89,9 @@ hermes plugins validate .                 # the catalog gate
 HERMES_HOME=/tmp/hk/home <hermes python> tests/e2e_hermes.py   # real tool calls through Hermes, no LLM
 ```
 
-Tested on Hermes 0.22.7: Linux (arm64, Ubuntu) and native Windows 11 (Git for Windows bash), unit tests, `hermes plugins
-validate`, the end-to-end script, and one real agent turn on each. macOS is untested.
+Tested on Hermes 0.22.7: unit tests, `hermes plugins validate` and the end-to-end script on Linux (arm64, Ubuntu) and on
+native Windows 11 (Git for Windows bash); a real agent turn (model deleting files through the terminal tool, then
+`hermes undo-effects restore`) on Windows. macOS is untested.
 
 Known limits: v1 saves files, not other side effects; commands the parser does not understand are reported, not
 guessed; a file changed by a *background* process between snapshot and restore is treated like any other later edit.
