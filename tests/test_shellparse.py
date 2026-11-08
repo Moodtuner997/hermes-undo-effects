@@ -1,4 +1,5 @@
 import os
+import time
 
 import pytest
 
@@ -135,3 +136,23 @@ def test_dev_null_and_proc_ignored(work):
 def test_msys_paths_translate():
     assert to_native("/c/Users/x/f.txt") == "C:\\Users\\x\\f.txt"
     assert to_native("/c") == "C:\\"
+
+
+def test_brace_groups_are_capped(work):
+    started = time.perf_counter()
+    plan = run("rm " + "{a,b}" * 24, work)  # 2**24 words if expanded in full
+    assert time.perf_counter() - started < 1.0
+    assert not plan.targets
+    assert plan.uncovered and "brace expansion too large" in plan.uncovered[0]
+
+
+def test_brace_expansion_up_to_the_cap_still_expands(work):
+    assert paths(run("rm {a,b}.txt", work), "delete") == ["a.txt", "b.txt"]
+    assert not run("rm " + "{a,b}" * 8, work).uncovered  # 256 words: the cap itself
+    assert run("rm " + "{a,b}" * 9, work).uncovered  # 512 words
+
+
+def test_install_and_cp_option_values_are_not_paths(work):
+    for cmd in ("install -m 644 a.txt b.txt", "install -m755 a.txt b.txt", "install --mode=755 a.txt b.txt",
+                "install -o root -g root -m 0644 a.txt b.txt", "cp -S .bak a.txt b.txt"):
+        assert paths(run(cmd, work), "write") == ["b.txt"], cmd

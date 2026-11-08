@@ -177,3 +177,33 @@ def test_symlink_roundtrip(env):
     store.finish(entry, True)
     store.restore(entry["id"])
     assert link.is_symlink() and os.readlink(link) == str(target)
+
+
+@pytest.mark.parametrize("folder", [".ssh", ".kube", ".docker", ".aws", ".gnupg"])
+def test_file_named_directly_inside_a_protected_directory_is_not_copied(env, folder):
+    store, work = env
+    f = work / folder / "config"
+    f.parent.mkdir()
+    f.write_text("token: not-for-the-store")
+    entry = snap(store, [(f, "delete")])
+    assert entry["items"][0]["pre"] == {"kind": "skipped", "reason": "protected"}
+    assert any("protected directory" in note for note in entry["uncovered"])
+    assert not store.objects.exists() or not any(p.is_file() for p in store.objects.rglob("*"))
+
+
+def test_nested_folder_of_a_protected_directory_is_not_copied(env):
+    store, work = env
+    nested = work / ".kube" / "cache"
+    nested.mkdir(parents=True)
+    (nested / "token").write_text("t")
+    entry = snap(store, [(nested, "delete")])
+    assert entry["items"][0]["pre"]["children"]["token"] == {"kind": "skipped", "reason": "protected"}
+
+
+def test_file_with_a_look_alike_parent_is_still_copied(env):
+    store, work = env
+    f = work / "ssh-notes" / "config"
+    f.parent.mkdir()
+    f.write_text("plain")
+    entry = snap(store, [(f, "delete")])
+    assert entry["items"][0]["pre"]["kind"] == "file"

@@ -117,6 +117,9 @@ class Store:
         if _is_protected(path.name):
             run.skipped.append(f"{path} (protected file name)")
             return {"kind": "skipped", "reason": "protected"}
+        if any(part in PROTECTED_DIRS for part in path.parts[:-1]):
+            run.skipped.append(f"{path} (inside a protected directory)")
+            return {"kind": "skipped", "reason": "protected"}
         if st.st_size > run.limits.max_file:
             run.skipped.append(f"{path} (larger than {run.limits.max_file // MB} MB)")
             return {"kind": "skipped", "reason": "too_large", "size": st.st_size}
