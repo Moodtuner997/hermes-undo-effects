@@ -1,0 +1,80 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  HERMES_VERSION: v0.22.7
+
+jobs:
+  tests:
+    name: tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.14"
+      - run: python -m pip install pytest
+      - run: python -m pytest tests -q
+
+  hermes:
+    name: hermes ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          path: plugin
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: NousResearch/hermes-agent
+          ref: ${{ env.HERMES_VERSION }}
+          path: hermes-agent
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.14"
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # 8.2.0
+        with:
+          version: "0.13.5"
+      - name: Install Hermes (its own lockfile)
+        working-directory: hermes-agent
+        run: uv sync --locked --python 3.14
+      - name: Validate the plugin
+        run: uv run --no-sync --project hermes-agent python hermes-agent/hermes_cli/main.py plugins validate ./plugin --install-deps
+        env:
+          HERMES_HOME: ${{ runner.temp }}/validate-home
+      - name: Real end-to-end check (real tool calls, no model)
+        env:
+          HERMES_HOME: ${{ runner.temp }}/e2e-home
+          HERMES_INTERACTIVE: "1"
+          PYTHONPATH: ${{ github.workspace }}/hermes-agent
+        run: |
+          mkdir -p "$HERMES_HOME/plugins"
+          cp -R plugin "$HERMES_HOME/plugins/undo-effects"
+          rm -rf "$HERMES_HOME/plugins/undo-effects/.git"
+          # approvals.mode manual: Hermes' default, smart, asks a model for every dangerous command
+          printf 'plugins:\n  enabled:\n    - undo-effects\napprovals:\n  mode: manual\n' > "$HERMES_HOME/config.yaml"
+          uv run --no-sync --project hermes-agent python plugin/tests/e2e_hermes.py
