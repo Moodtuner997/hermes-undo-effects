@@ -40,8 +40,8 @@ What was replaced is kept: `restore 20261104-140731-91ac` puts it back (redo).
 |---|---|
 | `write_file`, `patch` (replace and multi-file V4A patches) | the files written, moved or deleted |
 | `terminal` | `rm`, `rmdir`, `unlink`, `shred`, every `mv` (renames included), `cp`/`install` onto a path, `>` and `>>`, `tee`, `sed -i`, `truncate`, `dd of=`, `find ... -delete`, through `sudo`, `env`, `bash -c`, pipes and `&&` chains, with globs, braces and `~` expanded |
-| reported as *not covered* | `git clean`, `git reset --hard`, `git checkout --`, `git restore`, `find -exec`, `xargs rm`, command substitution, heredocs, `eval`, PowerShell and `cmd` commands, inline `python -c`/`node -e` that write files, `execute_code` that looks like it writes |
-| not saved, listed as such | files named like credentials (`.env`, `*.pem`, `id_*`, `auth.json`, ...), files above 50 MB, `node_modules`, `.venv`, `.git` |
+| reported as *not covered* | `git clean`, `git reset --hard`, `git checkout --`, `git restore`, `git stash`, `find -exec`, `xargs rm`, command substitution, heredocs, `eval`, PowerShell and `cmd` commands, inline `python -c`/`node -e` that write files, `execute_code` that looks like it writes, brace expansions of more than 256 words |
+| not saved, listed as such | files named like credentials (`.env`, `*.pem`, `id_*`, `auth.json`, ...), anything inside `.ssh`, `.aws`, `.gnupg`, `.docker`, `.kube`, `.azure` or `.gcloud`, files above 50 MB, `node_modules`, `.venv`, `.git` |
 | out of scope in v1 | messages sent, tickets created, MCP side effects (an inverse-action registry is the v2 roadmap) |
 
 ## Install
@@ -65,8 +65,13 @@ snapshot time budget (8 s; a snapshot that would take longer is cut short and re
 - **Reads outside the plugin's own data:** the contents of the files and directories a covered tool call is about
   to change, and their metadata.
 - **Writes:** unencrypted copies of those files under `HERMES_HOME/plugin-data/undo-effects/` (objects, entries).
-  Files whose names look like credentials are skipped, but a secret stored under an ordinary name would be copied:
-  set a short `retention_days` on shared machines.
+  Files whose names look like credentials, and anything inside `.ssh`, `.aws`, `.gnupg`, `.docker`, `.kube`, `.azure`
+  or `.gcloud`, are skipped, but a secret stored under an ordinary name elsewhere would be copied: set a short
+  `retention_days` on shared machines. Each entry also keeps the paths and the first 100 characters of the terminal
+  command, with `NAME=value` assignments whose name contains key, token, secret, password, auth or cred masked, and
+  passed through Hermes' own secret redactor when it is importable (best effort: a password given another way, such
+  as `curl -u user:password`, is not recognised); `/undo-effects list` prints that summary.
+  A restore writes and deletes at the original locations, after saving what it replaces.
 - **Shell commands, background processes, credentials:** none. The command is only parsed, never executed.
 - **Failure mode:** if a snapshot fails the tool call runs anyway, with a warning in the log.
 - **Terminal backends:** only the local backend is covered. With `TERMINAL_ENV` set to a remote sandbox the plugin
@@ -84,16 +89,26 @@ use them together if you like.
 ## Development
 
 ```bash
-python -m pytest tests -q                 # 44 tests, no Hermes needed
+python -m pytest tests -q                 # no Hermes needed
 hermes plugins validate .                 # the catalog gate
-HERMES_HOME=/tmp/hk/home <hermes python> tests/e2e_hermes.py   # real tool calls through Hermes, no LLM
+HERMES_HOME=/tmp/hk/home HERMES_INTERACTIVE=1 <hermes python> tests/e2e_hermes.py   # real tool calls through Hermes, no LLM
 ```
 
-Tested on Hermes 0.22.7: unit tests, `hermes plugins validate` and the end-to-end script on Linux (arm64, Ubuntu) and on
-native Windows 11 (Git for Windows bash); a real agent turn (model deleting files through the terminal tool, then
-`hermes undo-effects restore`) on Windows. macOS is untested.
+The end-to-end script needs a throwaway `HERMES_HOME/config.yaml` with `plugins: {enabled: [undo-effects]}` and
+`approvals: {mode: manual}` (Hermes' default, `smart`, asks a model), and the plugin copied to
+`HERMES_HOME/plugins/undo-effects`. It answers the dangerous-command prompt itself and sets
+`HERMES_DISABLE_FILE_STATE_GUARD=1`: on Windows, Hermes 0.22.7's read-before-write guard refuses to overwrite files whose
+creation and last-write times differ.
+
+CI (`.github/workflows/ci.yml`, GitHub-hosted runners) runs the unit tests, `hermes plugins validate --install-deps` and the
+end-to-end script against Hermes `v0.22.7`, installed from its lockfile, on `ubuntu-latest`, `windows-latest` and
+`macos-latest` (arm64). Also run by hand on native Windows 11 (Git for Windows bash) and Linux arm64, and a real agent
+turn (model deleting files through the terminal tool, then `hermes undo-effects restore`) on Windows. Not tested: Intel
+Macs, Hermes releases other than 0.22.7.
 
 Known limits: v1 saves files, not other side effects; commands the parser does not understand are reported, not
-guessed; a file changed by a *background* process between snapshot and restore is treated like any other later edit.
+guessed; a file changed by a *background* process between snapshot and restore is treated like any other later edit;
+the store is an ordinary folder under `HERMES_HOME`, so an agent can delete it (and the history in it) with the terminal
+tool, which the plugin cannot prevent.
 
 MIT licence.

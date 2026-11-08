@@ -21,7 +21,21 @@ logger = logging.getLogger(__name__)
 _V4A_FILE = re.compile(r"^\*\*\* (Update|Add|Delete) File:\s*(.+?)\s*$", re.M)
 _V4A_MOVE = re.compile(r"^\*\*\* Move to:\s*(.+?)\s*$", re.M)
 
+_SECRET_ASSIGNMENT = re.compile(
+    r"""(?i)\b(\w*(?:key|token|secret|passw(?:or)?d|auth|cred)\w*)=("[^"]*"|'[^']*'|\S+)""")
+
 _state: dict[str, Any] = {"store": None, "config": {}}
+
+
+def _redact(text: str) -> str:
+    """Mask secrets in the command text kept for the timeline (Hermes' own redactor when it is importable)."""
+    text = _SECRET_ASSIGNMENT.sub(r"\1=***", text)
+    try:
+        from agent.redact import redact_sensitive_text
+
+        return str(redact_sensitive_text(text, force=True))
+    except Exception:
+        return text
 
 
 def _hermes_home() -> Path:
@@ -84,7 +98,8 @@ def _plan_for(tool: str, args: dict[str, Any]) -> tuple[list[tuple[str, str]], l
         plan = parse_command(command, cwd)
         if plan.noop:
             return [], [], ""
-        return [(t.path, t.role) for t in plan.targets], plan.uncovered, "terminal " + " ".join(command.split())[:100]
+        summary = "terminal " + _redact(" ".join(command.split())[:400])[:100]
+        return [(t.path, t.role) for t in plan.targets], [_redact(u[:200]) for u in plan.uncovered[:20]], summary
     if tool == "execute_code" and inline_script_risky(str(args.get("code", ""))):
         return [], ["execute_code may modify files; not analysed"], "execute_code"
     return [], [], ""

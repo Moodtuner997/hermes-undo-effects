@@ -116,5 +116,14 @@ check("an approved dangerous command really deleted the directory", not (work / 
 print(slash("last"))
 check("directory is back after the dangerous command", (work / "proj" / "src" / "main.py").read_text() == "print('original')\n")
 
+# A key typed inside a command must not land in the timeline or on disk (Hermes' own redactor does this).
+fake_key = "sk-proj-" + "abcdefghij" * 4
+tool("terminal", {"command": f"echo {fake_key} > secret-note.txt", "workdir": str(work)})
+timeline = slash("list")
+check("the command is in the timeline", "secret-note.txt" in timeline, timeline[:300])
+check("a key typed in a command is masked in the timeline", fake_key not in timeline)
+store_text = "".join(p.read_text("utf-8") for p in (Path(os.environ["HERMES_HOME"]) / "plugin-data").rglob("entries/*.json"))
+check("a key typed in a command is not stored on disk", store_text != "" and fake_key not in store_text)
+
 print("\nartifacts in", work)
 sys.exit(1 if failures else 0)

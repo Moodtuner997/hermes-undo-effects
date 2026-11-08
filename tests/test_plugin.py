@@ -170,3 +170,73 @@ def test_cli_accepts_plugin_flags(ctx):
     ctx.cli["undo-effects"][0](parser)
     assert parser.parse_args(["restore", "1", "--dry-run"]).rest == ["restore", "1", "--dry-run"]
     assert parser.parse_args(["restore", "last", "--force"]).rest == ["restore", "last", "--force"]
+
+
+def test_inline_secrets_are_masked_in_the_timeline(ctx, work):
+    f = work / "a.txt"
+    f.write_text("a")
+    fake = "sk-live-" + "123456"  # built here so that secret scanners do not read the test file as a leak
+    call(ctx, "terminal", {"command": f"API_KEY={fake} sed -i s/a/b/ a.txt", "workdir": str(work)},
+         lambda: f.write_text("b"))
+    listing = ctx.commands["undo-effects"]("list", session_id="s1")
+    assert "sed -i" in listing and "API_KEY=***" in listing
+    stored = "".join(p.read_text("utf-8") for p in (plugin._store().root / "entries").glob("*.json"))
+    assert fake not in stored and fake not in listing
+
+
+def test_hermes_redactor_is_used_when_present(ctx, work, monkeypatch):
+    import sys
+    import types
+
+    redact = types.ModuleType("agent.redact")
+    redact.redact_sensitive_text = lambda text, force=False: text.replace("hunter2", "[redacted]")
+    monkeypatch.setitem(sys.modules, "agent", types.ModuleType("agent"))
+    monkeypatch.setitem(sys.modules, "agent.redact", redact)
+    f = work / "a.txt"
+    f.write_text("a")
+    call(ctx, "terminal", {"command": "echo hunter2 > a.txt", "workdir": str(work)}, lambda: f.write_text("b"))
+    listing = ctx.commands["undo-effects"]("list", session_id="s1")
+    assert "[redacted]" in listing and "hunter2" not in listing
+
+
+def test_a_broken_redactor_never_blocks_the_tool(ctx, work, monkeypatch):
+    import sys
+    import types
+
+    redact = types.ModuleType("agent.redact")
+
+    def boom(text, force=False):
+        raise RuntimeError("redactor down")
+
+    redact.redact_sensitive_text = boom
+    monkeypatch.setitem(sys.modules, "agent", types.ModuleType("agent"))
+    monkeypatch.setitem(sys.modules, "agent.redact", redact)
+    f = work / "a.txt"
+    f.write_text("a")
+    out = call(ctx, "terminal", {"command": "rm a.txt", "workdir": str(work)}, lambda: f.unlink() or "ran")
+    assert out == "ran"
+    assert "rm a.txt" in ctx.commands["undo-effects"]("list", session_id="s1")
+
+
+def test_no_network_no_child_process_and_the_command_is_never_run(ctx, work, monkeypatch):
+    """The disclosure says: no network, no shell command, no background process. Make each of them impossible."""
+    import os
+    import socket
+    import subprocess
+
+    def forbidden(*_a, **_k):
+        raise AssertionError("the plugin must not do this")
+
+    monkeypatch.setattr(socket, "socket", forbidden)
+    monkeypatch.setattr(subprocess, "Popen", forbidden)
+    monkeypatch.setattr(os, "system", forbidden)
+    marker = work / "must-not-exist"
+    (work / "a.txt").write_text("a")
+    for tool, args in [("terminal", {"command": f"touch {marker}; rm a.txt; echo x > b.txt", "workdir": str(work)}),
+                       ("write_file", {"path": str(work / "c.txt"), "content": "x"}),
+                       ("patch", {"mode": "patch", "patch": "*** Delete File: a.txt\n", "workdir": str(work)}),
+                       ("execute_code", {"code": "import shutil; shutil.rmtree('x')"})]:
+        assert call(ctx, tool, args, lambda: "ran") == "ran"
+    ctx.commands["undo-effects"]("list", session_id="s1")
+    ctx.commands["undo-effects"]("doctor")
+    assert not marker.exists()

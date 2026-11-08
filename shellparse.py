@@ -14,6 +14,7 @@ import shlex
 from dataclasses import dataclass, field
 
 MAX_DEPTH = 3
+MAX_BRACE_WORDS = 256
 
 _SEPARATORS = {";", "&&", "||", "|", "&", "(", ")", "|&"}
 _WRAPPERS = {"sudo", "command", "builtin", "nohup", "time", "nice", "doas", "stdbuf"}
@@ -28,6 +29,7 @@ _ENV_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 _BRACE = re.compile(r"\{([^{}]*,[^{}]*)\}")
 _DRIVE = re.compile(r"^/([a-zA-Z])(/|$)")
 _IGNORED_PREFIXES = ("/dev/", "/proc/", "/sys/")
+_VALUE_FLAGS = {"-m", "-o", "-g", "-S", "--mode", "--owner", "--group", "--suffix"}
 
 
 def inline_script_risky(text: str) -> bool:
@@ -65,13 +67,25 @@ def to_native(path: str) -> str:
     return path
 
 
+class _BraceOverflow(Exception):
+    pass
+
+
 def _brace_expand(word: str) -> list[str]:
-    m = _BRACE.search(word)
-    if not m:
-        return [word]
+    """Expand ``{a,b}`` groups; more than ``MAX_BRACE_WORDS`` words raises (n groups make 2**n words)."""
     out: list[str] = []
-    for part in m.group(1).split(","):
-        out.extend(_brace_expand(word[: m.start()] + part + word[m.end():]))
+
+    def walk(text: str) -> None:
+        m = _BRACE.search(text)
+        if not m:
+            out.append(text)
+            if len(out) > MAX_BRACE_WORDS:
+                raise _BraceOverflow
+            return
+        for part in m.group(1).split(","):
+            walk(text[: m.start()] + part + text[m.end():])
+
+    walk(word)
     return out
 
 
@@ -80,8 +94,13 @@ def _resolve(word: str, cwd: str, plan: Plan) -> list[str]:
     if "$(" in word or "`" in word:
         plan.uncovered.append(f"command substitution in {word!r}")
         return []
+    try:
+        items = _brace_expand(word)
+    except _BraceOverflow:
+        plan.uncovered.append(f"brace expansion too large in {word[:40]!r}")
+        return []
     results: list[str] = []
-    for item in _brace_expand(word):
+    for item in items:
         if item.startswith(_IGNORED_PREFIXES):
             continue
         if "$" in item:
@@ -153,6 +172,20 @@ def _flag_value(args: list[str], *names: str) -> str | None:
     return None
 
 
+def _without_flag_values(args: list[str]) -> list[str]:
+    """Drop the value of ``install -m MODE`` / ``-o OWNER`` / ``-g GROUP`` / ``-S SUFFIX`` so it is not read as a path."""
+    out: list[str] = []
+    skip = False
+    for a in args:
+        if skip:
+            skip = False
+        elif a in _VALUE_FLAGS:
+            skip = True
+        else:
+            out.append(a)
+    return out
+
+
 def _strip_prefix(seg: list[str]) -> list[str]:
     i = 0
     while i < len(seg):
@@ -186,7 +219,7 @@ def _handle_redirects(seg: list[str], cwd: str, plan: Plan) -> list[str]:
 def _dest_paths(args: list[str], cwd: str, plan: Plan) -> tuple[list[str], list[str]]:
     """Return (sources, destinations) for mv/cp, honouring ``-t DIR``."""
     target_dir = _flag_value(args, "-t", "--target-directory")
-    pos = _positional(args)
+    pos = _positional(_without_flag_values(args))
     if target_dir is not None:
         pos = [p for p in pos if p != target_dir]
         sources = [s for w in pos for s in _resolve(w, cwd, plan)]
