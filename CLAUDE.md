@@ -43,3 +43,7 @@ chantier : `.work/HANDOFF-hackathon-hermes.md` à la racine du parc.
   emporte l'historique (mesuré le 8/11, seule reste l'entrée de la suppression). Dit dans le README, rien à y faire.
 - Les fichiers visés directement dans `.ssh`, `.kube`, `.docker`… étaient copiés avant 0.1.1 (le dossier n'était testé que
   lors d'un parcours de dossier) ; le résumé de commande gardait les secrets en clair. Corrigés en 0.1.1, tickets 2 à 5.
+- La protection des dossiers sensibles se juge sur le chemin écrit ET sur le chemin réel (`os.path.realpath`) : un lien
+  symbolique ou une jonction Windows vers `.kube` donnait `alias/config` copié en clair en 0.1.1 (relecture du 9/11 sur la
+  PR de catalogue). Un dossier recalcule son chemin réel (une jonction n'est pas vue par `is_symlink()`), un fichier le
+  reçoit de son dossier. Les tests de liens se sautent seuls là où le système refuse d'en créer ; la CI Windows les joue.

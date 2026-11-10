@@ -41,7 +41,7 @@ What was replaced is kept: `restore 20261104-140731-91ac` puts it back (redo).
 | `write_file`, `patch` (replace and multi-file V4A patches) | the files written, moved or deleted |
 | `terminal` | `rm`, `rmdir`, `unlink`, `shred`, every `mv` (renames included), `cp`/`install` onto a path, `>` and `>>`, `tee`, `sed -i`, `truncate`, `dd of=`, `find ... -delete`, through `sudo`, `env`, `bash -c`, pipes and `&&` chains, with globs, braces and `~` expanded |
 | reported as *not covered* | `git clean`, `git reset --hard`, `git checkout --`, `git restore`, `git stash`, `find -exec`, `xargs rm`, command substitution, heredocs, `eval`, PowerShell and `cmd` commands, inline `python -c`/`node -e` that write files, `execute_code` that looks like it writes, brace expansions of more than 256 words |
-| not saved, listed as such | files named like credentials (`.env`, `*.pem`, `id_*`, `auth.json`, ...), anything inside `.ssh`, `.aws`, `.gnupg`, `.docker`, `.kube`, `.azure` or `.gcloud`, files above 50 MB, `node_modules`, `.venv`, `.git` |
+| not saved, listed as such | files named like credentials (`.env`, `*.pem`, `id_*`, `auth.json`, ...), anything inside `.ssh`, `.aws`, `.gnupg`, `.docker`, `.kube`, `.azure` or `.gcloud` (also when reached through a symlink or junction, and whatever the case of the folder name), files above 50 MB, `node_modules`, `.venv`, `.git` |
 | out of scope in v1 | messages sent, tickets created, MCP side effects (an inverse-action registry is the v2 roadmap) |
 
 ## Install
@@ -66,8 +66,9 @@ snapshot time budget (8 s; a snapshot that would take longer is cut short and re
   to change, and their metadata.
 - **Writes:** unencrypted copies of those files under `HERMES_HOME/plugin-data/undo-effects/` (objects, entries).
   Files whose names look like credentials, and anything inside `.ssh`, `.aws`, `.gnupg`, `.docker`, `.kube`, `.azure`
-  or `.gcloud`, are skipped, but a secret stored under an ordinary name elsewhere would be copied: set a short
-  `retention_days` on shared machines. Each entry also keeps the paths and the first 100 characters of the terminal
+  or `.gcloud`, are skipped (the check follows symlinks and junctions in the parent directories, and ignores case),
+  but a secret stored under an ordinary name elsewhere would be copied, and so would a hard link or a copy of a
+  credential file placed outside those folders: set a short `retention_days` on shared machines. Each entry also keeps the paths and the first 100 characters of the terminal
   command, with `NAME=value` assignments whose name contains key, token, secret, password, auth or cred masked, and
   passed through Hermes' own secret redactor when it is importable (best effort: a password given another way, such
   as `curl -u user:password`, is not recognised); `/undo-effects list` prints that summary.
