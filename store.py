@@ -61,6 +61,19 @@ def _is_protected(name: str) -> bool:
     return any(fnmatch.fnmatch(low, pat) for pat in PROTECTED_NAMES)
 
 
+def _protected_dir_in(path: Path, include_self: bool) -> bool:
+    """True when a component of ``path`` names a protected directory (case-insensitive:
+    ``.KUBE`` is the same folder on Windows and on the default macOS volume)."""
+    parts = path.parts if include_self else path.parts[:-1]
+    return any(part.lower() in PROTECTED_DIRS for part in parts)
+
+
+def _is_reparse_point(path: Path) -> bool:
+    """Windows only: a directory that may lead elsewhere without being a symlink (a junction).
+    ``is_symlink()`` does not report those; elsewhere the attribute does not exist."""
+    return bool(getattr(path.lstat(), "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT)
+
+
 def _atomic_write(path: Path, data: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".tmp-")
@@ -112,12 +125,14 @@ class Store:
             run.bytes_copied += size
         return sha, size
 
-    def _scan_file(self, path: Path, run: _Run) -> dict[str, Any]:
+    def _scan_file(self, path: Path, run: _Run, real: Path) -> dict[str, Any]:
         st = path.lstat()
         if _is_protected(path.name):
             run.skipped.append(f"{path} (protected file name)")
             return {"kind": "skipped", "reason": "protected"}
-        if any(part in PROTECTED_DIRS for part in path.parts[:-1]):
+        # Both the path as written and where it really lives: ``alias/config`` is a credential file
+        # when ``alias`` is a link (symlink, junction) to ``.kube``.
+        if _protected_dir_in(path, include_self=False) or _protected_dir_in(real, include_self=False):
             run.skipped.append(f"{path} (inside a protected directory)")
             return {"kind": "skipped", "reason": "protected"}
         if st.st_size > run.limits.max_file:
@@ -131,8 +146,14 @@ class Store:
         return {"kind": "file", "sha": sha, "size": size, "mode": stat.S_IMODE(st.st_mode),
                 "mtime": st.st_mtime}
 
-    def _scan(self, path: Path, run: _Run) -> dict[str, Any]:
-        """Describe ``path`` (and, for directories, everything under it)."""
+    def _scan(self, path: Path, run: _Run, real: Path | None = None) -> dict[str, Any]:
+        """Describe ``path`` (and, for directories, everything under it).
+
+        ``real`` is where ``path`` actually lives once every link above it is followed.  The path a
+        tool call names works it out with ``realpath``; below it a child is at ``real / name``, except
+        a Windows junction (a directory ``is_symlink()`` does not report), which works it out again.
+        A walk over 20,000 files costs one ``realpath``, not 20,000.
+        """
         try:
             if time.monotonic() > run.deadline:
                 raise _OutOfBudget("time_budget")
@@ -141,9 +162,11 @@ class Store:
             if path.is_symlink():
                 return {"kind": "symlink", "target": os.readlink(path)}
             if path.is_file():
-                return self._scan_file(path, run)
+                return self._scan_file(path, run, real if real is not None else Path(os.path.realpath(path)))
             if path.is_dir():
-                if path.name in PROTECTED_DIRS:
+                if real is None or _is_reparse_point(path):
+                    real = Path(os.path.realpath(path))
+                if path.name.lower() in PROTECTED_DIRS or real.name.lower() in PROTECTED_DIRS:
                     run.skipped.append(f"{path} (protected directory)")
                     return {"kind": "skipped", "reason": "protected"}
                 children: dict[str, Any] = {}
@@ -154,7 +177,7 @@ class Store:
                         continue
                     if run.files > run.limits.max_files_per_dir:
                         raise _OutOfBudget("too_many_files")
-                    children[child.name] = self._scan(child, run)
+                    children[child.name] = self._scan(child, run, real / child.name)
                 return {"kind": "dir", "mode": stat.S_IMODE(path.stat().st_mode), "children": children}
             return {"kind": "skipped", "reason": "special_file"}
         except _OutOfBudget:

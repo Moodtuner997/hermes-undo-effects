@@ -200,6 +200,103 @@ def test_nested_folder_of_a_protected_directory_is_not_copied(env):
     assert entry["items"][0]["pre"]["children"]["token"] == {"kind": "skipped", "reason": "protected"}
 
 
+SECRET = b"token: SECRET-TOKEN-123\n"
+
+
+def _link_to_dir(link, target, kind):
+    """A directory link of the given kind, or skip when this machine cannot make one."""
+    if kind == "junction":
+        if os.name != "nt":
+            pytest.skip("junctions exist on Windows only")
+        import _winapi
+        _winapi.CreateJunction(str(target), str(link))
+        return
+    try:
+        os.symlink(target, link, target_is_directory=True)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"cannot create a symlink here ({exc})")
+
+
+def _store_files(store):
+    return [p for p in store.root.rglob("*") if p.is_file() and p.parent != store.entries_dir]
+
+
+@pytest.fixture(params=["symlink", "junction"])
+def link_kind(request):
+    return request.param
+
+
+@pytest.mark.parametrize("folder", [".kube", ".ssh"])
+def test_file_reached_through_a_link_to_a_protected_directory_is_not_copied(env, tmp_path, folder, link_kind):
+    store, work = env
+    real = tmp_path / "home" / folder
+    real.mkdir(parents=True)
+    (real / "config").write_bytes(SECRET)
+    _link_to_dir(work / "alias", real, link_kind)
+    entry = snap(store, [(work / "alias" / "config", "delete")])
+    assert entry["items"][0]["pre"] == {"kind": "skipped", "reason": "protected"}
+    assert any("protected directory" in note for note in entry["uncovered"])
+    assert not any(SECRET in p.read_bytes() for p in _store_files(store))
+
+
+def test_folder_reached_through_a_link_to_a_protected_directory_is_not_copied(env, tmp_path, link_kind):
+    store, work = env
+    real = tmp_path / "home" / ".kube"
+    (real / "cache").mkdir(parents=True)
+    (real / "cache" / "token").write_bytes(SECRET)
+    _link_to_dir(work / "alias", real, link_kind)
+    entry = snap(store, [(work / "alias" / "cache", "delete")])
+    assert entry["items"][0]["pre"]["children"]["token"] == {"kind": "skipped", "reason": "protected"}
+    assert not any(SECRET in p.read_bytes() for p in _store_files(store))
+
+
+def test_walking_a_folder_that_holds_a_link_to_a_protected_directory_copies_nothing_of_it(env, tmp_path, link_kind):
+    store, work = env
+    real = tmp_path / "home" / ".kube"
+    real.mkdir(parents=True)
+    (real / "config").write_bytes(SECRET)
+    _link_to_dir(work / "alias", real, link_kind)
+    (work / "notes.txt").write_text("ordinary")
+    entry = snap(store, [(work, "delete")])
+    children = entry["items"][0]["pre"]["children"]
+    assert children["notes.txt"]["kind"] == "file"
+    assert children["alias"]["kind"] == "symlink" or children["alias"] == {"kind": "skipped", "reason": "protected"}
+    assert not any(SECRET in p.read_bytes() for p in _store_files(store))
+
+
+def test_a_link_to_a_link_to_a_protected_directory_is_followed_to_the_end(env, tmp_path):
+    store, work = env
+    real = tmp_path / "home" / ".aws"
+    real.mkdir(parents=True)
+    (real / "config").write_bytes(SECRET)
+    _link_to_dir(tmp_path / "hop", real, "symlink")
+    _link_to_dir(work / "alias", tmp_path / "hop", "symlink")
+    entry = snap(store, [(work / "alias" / "config", "delete")])
+    assert entry["items"][0]["pre"] == {"kind": "skipped", "reason": "protected"}
+    assert not any(SECRET in p.read_bytes() for p in _store_files(store))
+
+
+@pytest.mark.parametrize("folder", [".KUBE", ".Ssh"])
+def test_protected_directory_names_match_whatever_the_case(env, folder):
+    store, work = env
+    f = work / folder / "config"
+    f.parent.mkdir()
+    f.write_bytes(SECRET)
+    entry = snap(store, [(f, "delete")])
+    assert entry["items"][0]["pre"] == {"kind": "skipped", "reason": "protected"}
+    assert not any(SECRET in p.read_bytes() for p in _store_files(store))
+
+
+def test_a_link_to_an_ordinary_directory_is_still_saved_through(env, tmp_path, link_kind):
+    store, work = env
+    real = tmp_path / "home" / "project"
+    real.mkdir(parents=True)
+    (real / "main.py").write_text("print(1)")
+    _link_to_dir(work / "alias", real, link_kind)
+    entry = snap(store, [(work / "alias" / "main.py", "delete")])
+    assert entry["items"][0]["pre"]["kind"] == "file"
+
+
 def test_file_with_a_look_alike_parent_is_still_copied(env):
     store, work = env
     f = work / "ssh-notes" / "config"
